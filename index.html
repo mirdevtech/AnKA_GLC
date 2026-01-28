@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ANKA GLC Kontrol</title>
+<script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+<style>
+  body {
+    font-size: 1.5em;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    margin: 0;
+    padding: 20px;
+    font-family: Arial, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  }
+  .container {
+    background: white;
+    padding: 30px;
+    border-radius: 20px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    text-align: center;
+    max-width: 600px;
+    width: 100%;
+  }
+  h1 {
+    color: #333;
+    margin-bottom: 20px;
+    font-size: 1.3em;
+  }
+  .status-bar {
+    background: #f8f9fa;
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+    border: 2px solid #dee2e6;
+  }
+  .mqtt-status {
+    font-size: 0.8em;
+    font-weight: bold;
+    display: inline-block;
+    padding: 8px 15px;
+    border-radius: 20px;
+    margin: 5px;
+  }
+  .mqtt-connected {
+    background: #d4edda;
+    color: #155724;
+  }
+  .mqtt-disconnected {
+    background: #f8d7da;
+    color: #721c24;
+  }
+  .relay-card {
+    background: #f8f9fa;
+    padding: 20px;
+    margin: 15px 0;
+    border-radius: 15px;
+    border: 2px solid #dee2e6;
+  }
+  .relay-title {
+    font-size: 1.1em;
+    font-weight: bold;
+    color: #495057;
+    margin-bottom: 15px;
+  }
+  .status {
+    font-size: 1.2em;
+    font-weight: bold;
+    margin: 15px 0;
+    padding: 15px;
+    border-radius: 10px;
+    background: white;
+  }
+  .status-on {
+    color: #28a745;
+  }
+  .status-off {
+    color: #dc3545;
+  }
+  .status-unknown {
+    color: #6c757d;
+  }
+  button {
+    font-size: 0.9em;
+    margin: 0.3em;
+    padding: 0.7em 1.5em;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.3s;
+    font-weight: bold;
+  }
+  .btn-on {
+    background: #28a745;
+    color: white;
+  }
+  .btn-on:active {
+    background: #218838;
+    transform: scale(0.95);
+  }
+  .btn-off {
+    background: #dc3545;
+    color: white;
+  }
+  .btn-off:active {
+    background: #c82333;
+    transform: scale(0.95);
+  }
+  .input-card {
+    background: #e3f2fd;
+    padding: 15px;
+    margin: 15px 0;
+    border-radius: 15px;
+    border: 2px solid #90caf9;
+  }
+  .input-title {
+    font-size: 0.9em;
+    font-weight: bold;
+    color: #1976d2;
+    margin-bottom: 10px;
+  }
+  .input-value {
+    font-size: 2em;
+    font-weight: bold;
+    color: #0d47a1;
+    font-family: monospace;
+  }
+  .ntc-card {
+    background: #fff3e0;
+    padding: 15px;
+    margin: 15px 0;
+    border-radius: 15px;
+    border: 2px solid #ffb74d;
+  }
+  .ntc-title {
+    font-size: 0.9em;
+    font-weight: bold;
+    color: #e65100;
+    margin-bottom: 10px;
+  }
+  .ntc-temp {
+    font-size: 1.8em;
+    font-weight: bold;
+    color: #ff6f00;
+    font-family: monospace;
+  }
+  .info {
+    margin-top: 20px;
+    font-size: 0.6em;
+    color: #666;
+    border-top: 2px solid #dee2e6;
+    padding-top: 15px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🔌 ANKA GLC Kontrol</h1>
+  
+  <div class="status-bar">
+    <div id="mqtt-status" class="mqtt-status mqtt-disconnected">
+      Web: Bağlanıyor...
+    </div>
+    <div id="pico-status" class="mqtt-status mqtt-disconnected">
+      ANKA GLC: Bilinmiyor
+    </div>
+  </div>
+  
+  <div class="relay-card">
+    <div class="relay-title">⚡ LED (GP14)</div>
+    <div id="led-status" class="status status-unknown">
+      Durum: Bekleniyor...
+    </div>
+    <button class="btn-on" onclick="sendCommand('pico/led', 'ON')">AÇ</button>
+    <button class="btn-off" onclick="sendCommand('pico/led', 'OFF')">KAPAT</button>
+  </div>
+  
+  <div class="ntc-card">
+    <div class="ntc-title">🌡️ NTC Sıcaklık (GP27)</div>
+    <div class="ntc-temp" id="ntc-temp">-- °C</div>
+  </div>
+  
+  <div class="info">
+    <p>📡 MQTT Broker: test.mosquitto.org</p>
+    <p>🔄 Otomatik güncelleme aktif</p>
+    <p>💾 Kalıcı mesaj sistemi etkin</p>
+  </div>
+</div>
+
+<script>
+// MQTT ayarları
+const MQTT_BROKER = 'wss://test.mosquitto.org:8081';
+const MQTT_TOPIC_LED = 'pico/led';
+const MQTT_TOPIC_NTC = 'pico/ntc';
+const MQTT_TOPIC_STATUS = 'pico/status';
+
+let client = null;
+let picoOnlineCheckInterval = null;
+let lastPicoHeartbeat = 0;
+let picoHeartbeatReceived = false; // İlk heartbeat alındı mı?
+
+// MQTT bağlantısı
+function connectMQTT() {
+  console.log('MQTT bağlanılıyor...');
+  
+  client = mqtt.connect(MQTT_BROKER, {
+    clientId: 'web_client_' + Math.random().toString(16).substr(2, 8)
+  });
+  
+  client.on('connect', function() {
+    console.log('MQTT bağlandı!');
+    updateMQTTStatus(true);
+    
+    // Konulara abone ol
+    client.subscribe(MQTT_TOPIC_LED, function(err) {
+      if (!err) {
+        console.log('LED konusuna abone olundu');
+      }
+    });
+    
+    client.subscribe(MQTT_TOPIC_NTC, function(err) {
+      if (!err) {
+        console.log('NTC konusuna abone olundu');
+      }
+    });
+    
+    client.subscribe(MQTT_TOPIC_STATUS, function(err) {
+      if (!err) {
+        console.log('Status konusuna abone olundu');
+      }
+    });
+    
+    // Pico online kontrolü başlat (her 3 saniyede bir kontrol et)
+    if (picoOnlineCheckInterval) {
+      clearInterval(picoOnlineCheckInterval);
+    }
+    picoOnlineCheckInterval = setInterval(checkPicoOnline, 3000);
+  });
+  
+  client.on('message', function(topic, message) {
+    const msg = message.toString();
+    console.log('Gelen mesaj:', topic, msg);
+    
+    if (topic === MQTT_TOPIC_LED) {
+      updateLEDStatus(msg);
+    } else if (topic === MQTT_TOPIC_NTC) {
+      updateNTCTemp(msg);
+    } else if (topic === MQTT_TOPIC_STATUS) {
+      if (msg === 'online') {
+        lastPicoHeartbeat = Date.now();
+        picoHeartbeatReceived = true; // İlk heartbeat alındı
+        updatePicoStatus(true);
+      }
+    }
+  });
+  
+  client.on('error', function(error) {
+    console.error('MQTT hatası:', error);
+    updateMQTTStatus(false);
+  });
+  
+  client.on('close', function() {
+    console.log('MQTT bağlantısı kapandı');
+    updateMQTTStatus(false);
+    // 5 saniye sonra yeniden bağlan
+    setTimeout(connectMQTT, 5000);
+  });
+}
+
+// MQTT durum güncelle
+function updateMQTTStatus(connected) {
+  const statusEl = document.getElementById('mqtt-status');
+  if (connected) {
+    statusEl.textContent = 'Web: Bağlı ✅';
+    statusEl.className = 'mqtt-status mqtt-connected';
+  } else {
+    statusEl.textContent = 'Web: Bağlantı Yok ❌';
+    statusEl.className = 'mqtt-status mqtt-disconnected';
+  }
+}
+
+// Pico durum güncelle
+function updatePicoStatus(online) {
+  const statusEl = document.getElementById('pico-status');
+  const ledButtons = document.querySelectorAll('.relay-card button');
+  const ledStatus = document.getElementById('led-status');
+  
+  if (online) {
+    statusEl.textContent = 'ANKA GLC: Online ✅';
+    statusEl.className = 'mqtt-status mqtt-connected';
+    // Butonları aktif et
+    ledButtons.forEach(btn => {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+    });
+  } else {
+    statusEl.textContent = 'ANKA GLC: Offline ❌';
+    statusEl.className = 'mqtt-status mqtt-disconnected';
+    // Butonları devre dışı bırak
+    ledButtons.forEach(btn => {
+      btn.disabled = true;
+      btn.style.opacity = '0.5';
+      btn.style.cursor = 'not-allowed';
+    });
+    // LED durumunu bilinmiyor yap
+    ledStatus.textContent = 'Durum: Bilinmiyor';
+    ledStatus.className = 'status status-unknown';
+  }
+}
+
+// Pico online kontrolü (5 saniyeden eski heartbeat varsa offline say)
+function checkPicoOnline() {
+  // Hiç heartbeat almadıysak, offline say
+  if (!picoHeartbeatReceived) {
+    updatePicoStatus(false);
+    return;
+  }
+  
+  const now = Date.now();
+  const timeSinceLastHeartbeat = (now - lastPicoHeartbeat) / 1000;
+  
+  if (timeSinceLastHeartbeat > 5) {
+    updatePicoStatus(false);
+  } else {
+    updatePicoStatus(true);
+  }
+}
+
+// LED durumu güncelle
+function updateLEDStatus(status) {
+  const statusEl = document.getElementById('led-status');
+  if (status === 'ON') {
+    statusEl.textContent = 'Durum: Açık';
+    statusEl.className = 'status status-on';
+  } else if (status === 'OFF') {
+    statusEl.textContent = 'Durum: Kapalı';
+    statusEl.className = 'status status-off';
+  }
+}
+
+// NTC sıcaklık güncelle
+function updateNTCTemp(temp) {
+  const tempEl = document.getElementById('ntc-temp');
+  if (temp === 'None' || temp === 'null') {
+    tempEl.textContent = 'Bağlı değil';
+  } else {
+    tempEl.textContent = temp + ' °C';
+  }
+}
+
+// Komut gönder - RETAINED mesaj ile
+function sendCommand(topic, message) {
+  // Önce Pico'nun online olup olmadığını kontrol et
+  if (!picoHeartbeatReceived) {
+    alert('ANKA GLC bağlantısı bekleniyor...');
+    return;
+  }
+  
+  const now = Date.now();
+  const timeSinceLastHeartbeat = (now - lastPicoHeartbeat) / 1000;
+  
+  if (timeSinceLastHeartbeat > 5) {
+    alert('ANKA GLC offline! Lütfen ANKA GLC nin bağlı olduğundan emin olun.');
+    return;
+  }
+  
+  if (client && client.connected) {
+    // retain: true parametresi eklendi - broker son durumu saklar
+    client.publish(topic, message, { retain: true }, function(err) {
+      if (err) {
+        console.error('Gönderim hatası:', err);
+      } else {
+        console.log('Gönderildi (retained):', topic, message);
+      }
+    });
+  } else {
+    alert('MQTT bağlantısı yok!');
+  }
+}
+
+// Sayfa yüklendiğinde MQTT'ye bağlan
+window.addEventListener('load', function() {
+  connectMQTT();
+});
+</script>
+</body>
+</html>
