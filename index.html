@@ -209,7 +209,7 @@ function connectMQTT() {
   console.log('MQTT bağlanılıyor...');
   
   client = mqtt.connect(MQTT_BROKER, {
-    clientId: 'web_client_' + Math.random().toString(16).substr(2, 8)
+    clientId: 'web_client_' +Date.now().toString(36) + Math.random().toString(36).substr(2, 9)
   });
   
   client.on('connect', function() {
@@ -390,4 +390,5 @@ window.addEventListener('load', function() {
 });
 </script>
 </body>
+
 </html>
